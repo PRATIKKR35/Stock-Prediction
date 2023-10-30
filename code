@@ -1,0 +1,67 @@
+#importing tools
+import yfinance as yf
+import pandas as pd
+import datetime
+from datetime import date, timedelta 
+import warnings
+warnings.filterwarnings("ignore")
+
+e1 = datetime.date.today()
+print(e1.strftime ("%Y-%m-%d"))
+
+#setting start and end dates for reliance stock
+end_date = e1.strftime ("%Y-%m-%d")
+d2 = e1-timedelta(days=360)
+d2=d2.strftime("%Y-%m-%d")
+start_date=d2
+#getting data
+data = yf.download ('RELIANCE.NS',start=start_date,end=end_date, progress=False)
+
+#showing data
+data["Date"]=data.index
+data=data[["Date",'Open','High','Low','Close','Adj Close','Volume']]
+data.reset_index(drop=True, inplace=True)
+print(data.tail)
+
+data=data[["Date","Close"]]
+print(data.head())
+
+#visualizing the data
+import matplotlib.pyplot as plt 
+plt.style.use('fivethirtyeight')
+plt.figure(figsize=(10,5)) #figure aspects 
+plt.plot(data ["Date"],data["Close"]) #plotting data
+
+#understanding if the data is stationary Independent of time) or seasonal(x)
+from statsmodels.tsa. seasonal import seasonal_decompose #using multiplicative seasonal decomposition
+result = seasonal_decompose(data["Close"],
+model='multiplicative', period = 20)
+fig = plt. figure()
+fig = result.plot()
+fig.set_size_inches (10,5)
+
+
+#finding p,d,p values
+#finding p
+pd.plotting.autocorrelation_plot(data["Close"])
+
+#finding q
+from statsmodels.graphics.tsaplots import plot_pacf 
+plot_pacf(data["Close"],lags=50)
+#here q=2 since 2 values are staying away
+#d=1(ssnl)
+
+#building ARMA model
+p,d,q = 5,1,2
+from statsmodels.tsa.arima.model import ARIMA
+model = ARIMA(data["Close"], order=(p,d,q))
+fitted = model.fit() #fitting the ARIMA midel to data
+print(fitted. summary())
+
+#predicton
+predictions = fitted.predict()
+print(predictions)
+
+predictions.plot(legend=True,label="Predictions")
+data['Close'].plot(legend=True,label="Training data",figsize=(20,10))
+
