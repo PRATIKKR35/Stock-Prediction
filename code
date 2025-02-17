@@ -1,67 +1,116 @@
-#importing tools
-import yfinance as yf
+import numpy as np
 import pandas as pd
-import datetime
-from datetime import date, timedelta 
-import warnings
-warnings.filterwarnings("ignore")
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+from datetime import datetime
 
-e1 = datetime.date.today()
-print(e1.strftime ("%Y-%m-%d"))
+# Load the dataset from the path
+data = pd.read_csv('')
 
-#setting start and end dates for reliance stock
-end_date = e1.strftime ("%Y-%m-%d")
-d2 = e1-timedelta(days=360)
-d2=d2.strftime("%Y-%m-%d")
-start_date=d2
-#getting data
-data = yf.download ('RELIANCE.NS',start=start_date,end=end_date, progress=False)
+# Convert the 'Date' column to datetime format for filtering
+data['Date'] = pd.to_datetime(data['Date'])
 
-#showing data
-data["Date"]=data.index
-data=data[["Date",'Open','High','Low','Close','Adj Close','Volume']]
-data.reset_index(drop=True, inplace=True)
-print(data.tail)
+# User input: Select the year or date range for prediction
+start_year = int(input("Enter start year for prediction (e.g., 2015): "))
+end_year = int(input("Enter end year for prediction (e.g., 2022): "))
 
-data=data[["Date","Close"]]
-print(data.head())
+# Filter the dataset based on the selected year range
+filtered_data = data[(data['Date'].dt.year >= start_year) & (data['Date'].dt.year <= end_year)]
 
-#visualizing the data
-import matplotlib.pyplot as plt 
-plt.style.use('fivethirtyeight')
-plt.figure(figsize=(10,5)) #figure aspects 
-plt.plot(data ["Date"],data["Close"]) #plotting data
+# Plot the selected data for the user
+plt.figure(figsize=(10, 6))
+plt.plot(filtered_data['Date'], filtered_data['Close'], label='Closing Price')
+plt.title(f"Stock Price from {start_year} to {end_year}")
+plt.xlabel('Date')
+plt.ylabel('Price')
+plt.legend()
+plt.show()
 
-#understanding if the data is stationary Independent of time) or seasonal(x)
-from statsmodels.tsa. seasonal import seasonal_decompose #using multiplicative seasonal decomposition
-result = seasonal_decompose(data["Close"],
-model='multiplicative', period = 20)
-fig = plt. figure()
-fig = result.plot()
-fig.set_size_inches (10,5)
+# We will use the 'Close' price for prediction
+stock_data = filtered_data[['Close']]
 
+# Normalize the data
+scaler = MinMaxScaler(feature_range=(0, 1))
+scaled_data = scaler.fit_transform(stock_data)
 
-#finding p,d,p values
-#finding p
-pd.plotting.autocorrelation_plot(data["Close"])
+# Prepare data for LSTM
+def create_dataset(data, time_step=60):
+    X, y = [], []
+    for i in range(time_step, len(data)):
+        X.append(data[i-time_step:i, 0])
+        y.append(data[i, 0])
+    return np.array(X), np.array(y)
 
-#finding q
-from statsmodels.graphics.tsaplots import plot_pacf 
-plot_pacf(data["Close"],lags=50)
-#here q=2 since 2 values are staying away
-#d=1(ssnl)
+# Create datasets
+X, y = create_dataset(scaled_data)
 
-#building ARMA model
-p,d,q = 5,1,2
-from statsmodels.tsa.arima.model import ARIMA
-model = ARIMA(data["Close"], order=(p,d,q))
-fitted = model.fit() #fitting the ARIMA midel to data
-print(fitted. summary())
+# Reshape data for LSTM [samples, time_step, features]
+X = X.reshape(X.shape[0], X.shape[1], 1)
 
-#predicton
-predictions = fitted.predict()
-print(predictions)
+# Split data into train and test sets (80% for training, 20% for testing)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
 
-predictions.plot(legend=True,label="Predictions")
-data['Close'].plot(legend=True,label="Training data",figsize=(20,10))
+# Build LSTM model
+model = Sequential()
 
+model.add(LSTM(units=50, return_sequences=True, input_shape=(X_train.shape[1], 1)))
+model.add(Dropout(0.2))
+model.add(LSTM(units=50, return_sequences=False))
+model.add(Dropout(0.2))
+model.add(Dense(units=1))
+
+# Compile the model
+model.compile(optimizer='adam', loss='mean_squared_error')
+
+# Train the model
+epochs = int(input("Enter number of epochs for training (e.g., 10): "))
+batch_size = int(input("Enter batch size for training (e.g., 32): "))
+model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size)
+
+# Predicting the stock prices
+predicted_stock_price = model.predict(X_test)
+
+# Inverse transform to get the actual values
+predicted_stock_price = scaler.inverse_transform(predicted_stock_price)
+y_test_actual = scaler.inverse_transform(y_test.reshape(-1, 1))
+
+# Plotting the results
+plt.figure(figsize=(14,7))
+plt.plot(y_test_actual, color='red', label='Actual Stock Price')
+plt.plot(predicted_stock_price, color='blue', label='Predicted Stock Price')
+plt.title(f"Stock Price Prediction from {start_year} to {end_year} (LSTM)")
+plt.xlabel('Time')
+plt.ylabel('Stock Price')
+plt.legend()
+plt.show()
+
+# Making predictions for the next N days
+future_days = int(input("Enter number of future days to predict (e.g., 30): "))
+
+# Prepare the data for prediction (latest 'time_step' days from the dataset)
+latest_data = scaled_data[-60:]  # Last 60 days for prediction
+
+# Predict future stock prices
+future_predictions = []
+for _ in range(future_days):
+    input_data = latest_data.reshape(1, -1, 1)
+    predicted_price = model.predict(input_data)
+    future_predictions.append(predicted_price[0][0])
+    latest_data = np.append(latest_data[1:], predicted_price)  # Update with the predicted price
+
+# Inverse transform to get the actual values of future predictions
+future_predictions = scaler.inverse_transform(np.array(future_predictions).reshape(-1, 1))
+
+# Plotting future predictions
+future_dates = pd.date_range(start=data['Date'].max(), periods=future_days + 1, freq='D')[1:]
+
+plt.figure(figsize=(14,7))
+plt.plot(future_dates, future_predictions, color='green', label=f"Predicted Stock Price for next {future_days} days")
+plt.title(f"Future Stock Price Prediction for next {future_days} days (LSTM)")
+plt.xlabel('Date')
+plt.ylabel('Stock Price')
+plt.legend()
+plt.show()
